@@ -32,29 +32,39 @@ from sam3.train.data.collator import collate_fn_api
 from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
 from image_utils import load_image_as_rgb
 
+# Optional TPU support (torch_xla + AutoXLA); all imports inside are guarded
+import tpu_utils
+
 from torchvision.transforms import v2
 
 
 class SAM3LoRAInference:
-    def __init__(self, config_path, weights_path):
+    def __init__(self, config_path, weights_path, use_tpu=False):
         """
         Initialize SAM3 LoRA inference.
 
         Args:
             config_path: Path to YAML config file used for training
             weights_path: Path to saved LoRA weights (.pt file)
+            use_tpu: Run inference on TPU via AutoXLA (requires torch_xla)
         """
         with open(config_path, "r") as f:
             self.config = yaml.safe_load(f)
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.use_tpu = use_tpu or self.config.get("hardware", {}).get("device") == "tpu"
+        if self.use_tpu:
+            tpu_utils.require_tpu()
+            self.device = tpu_utils.get_xla_device()
+            print(f"Running inference on TPU via AutoXLA")
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.weights_path = weights_path
         self.resolution = 1008
 
-        # Build Model
+        # Build Model (on CPU first when targeting TPU; AutoXLA moves/shards it)
         print("Building SAM3 model...")
         self.model = build_sam3_image_model(
-            device=self.device.type,
+            device="cpu" if self.use_tpu else self.device.type,
             compile=False,
             load_from_HF=True,
             bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz",
@@ -82,7 +92,13 @@ class SAM3LoRAInference:
         print(f"Loading LoRA weights from {weights_path}...")
         load_lora_weights(self.model, weights_path)
 
-        self.model.to(self.device)
+        if self.use_tpu:
+            # AutoXLA pipeline: (optional) quantization -> XLA device -> SPMD sharding
+            self.model = tpu_utils.prepare_model_for_tpu(
+                self.model, self.config.get("tpu", {})
+            )
+        else:
+            self.model.to(self.device)
         self.model.eval()
 
         # Setup image transform
@@ -182,6 +198,7 @@ class SAM3LoRAInference:
         # Forward pass
         print("Running inference...")
         outputs_list = self.model(input_batch)
+        tpu_utils.mark_step()  # dispatch the XLA graph (no-op off TPU)
         outputs = outputs_list[-1]
 
         # Extract predictions
@@ -397,6 +414,11 @@ def main():
         default=0.5,
         help="NMS IoU threshold (default: 0.5, lower = fewer boxes)"
     )
+    parser.add_argument(
+        "--tpu",
+        action="store_true",
+        help="Run inference on TPU via AutoXLA (requires torch_xla and AutoXLA; see tpu_utils.py)"
+    )
 
     args = parser.parse_args()
 
@@ -423,7 +445,7 @@ def main():
         return
 
     # Initialize inference
-    inferencer = SAM3LoRAInference(args.config, args.weights)
+    inferencer = SAM3LoRAInference(args.config, args.weights, use_tpu=args.tpu)
 
     # Run prediction
     predictions = inferencer.predict(args.image, args.prompt)

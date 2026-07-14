@@ -77,6 +77,19 @@ evaluation:
 
 # Hardware settings
 hardware:
-  device: "cuda"             # cuda or cpu
+  device: "cuda"             # cuda, cpu, or tpu (tpu requires torch_xla + AutoXLA)
   dataloader_pin_memory: true
   use_compile: false         # torch.compile (requires PyTorch 2.0+)
+
+# TPU settings (only used with --tpu or hardware.device: "tpu").
+# Requires torch_xla and AutoXLA (https://github.com/Locutusque/autoxla);
+# see tpu_utils.py for install instructions.
+tpu:
+  sharding_strategy: "fsdp"    # fsdp | dp | mp | 2d | 3d (AutoXLA mesh strategy)
+  use_fsdp_wrap: false         # torch_xla FSDPv2 wrapping; keep false for LoRA training
+  quantize_base_model: false   # QLoRA-style int8/int4 quantization of the frozen base
+  quantization:
+    n_bits: 8
+    use_pallas: true
+    quantize_activation: false
+    exclude_layers: []
