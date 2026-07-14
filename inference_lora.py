@@ -30,6 +30,7 @@ from sam3.model_builder import build_sam3_image_model
 from sam3.train.data.sam3_image_dataset import Datapoint, Image, FindQueryLoaded, InferenceMetadata
 from sam3.train.data.collator import collate_fn_api
 from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
+from image_utils import load_image_as_rgb
 
 from torchvision.transforms import v2
 
@@ -104,7 +105,7 @@ class SAM3LoRAInference:
             Prepared datapoint for SAM3
         """
         # Load image
-        pil_image = PILImage.open(image_path).convert("RGB")
+        pil_image = load_image_as_rgb(image_path)
         orig_w, orig_h = pil_image.size
 
         # Resize image

@@ -27,6 +27,7 @@ from sam3.train.data.collator import collate_fn_api
 from sam3.train.data.sam3_image_dataset import Datapoint, Image, Object, FindQueryLoaded, InferenceMetadata
 from sam3.model.box_ops import box_xywh_to_xyxy
 from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights, count_parameters
+from image_utils import load_image_as_rgb
 
 from torchvision.transforms import v2
 
@@ -93,9 +94,9 @@ class COCOSegmentDataset(Dataset):
         img_id = self.image_ids[idx]
         img_info = self.images[img_id]
 
-        # Load image
+        # Load image (supports JPG/PNG/TIFF, including 16-bit medical TIFFs)
         img_path = self.split_dir / img_info['file_name']
-        pil_image = PILImage.open(img_path).convert("RGB")
+        pil_image = load_image_as_rgb(img_path)
         orig_w, orig_h = pil_image.size
 
         # Resize image

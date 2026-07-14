@@ -55,6 +55,7 @@ from sam3.eval.postprocessors import PostProcessImage
 
 # LoRA imports
 from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
+from image_utils import load_image_as_rgb
 
 
 class SAM3LoRAInference:
@@ -229,7 +230,7 @@ class SAM3LoRAInference:
             raise FileNotFoundError(f"Image not found: {image_path}")
 
         # Load image
-        pil_image = PILImage.open(image_path).convert("RGB")
+        pil_image = load_image_as_rgb(image_path)
         print(f"📷 Loaded image: {image_path}")
         print(f"   Size: {pil_image.size}")
         print(f"   Prompts: {text_prompts}")

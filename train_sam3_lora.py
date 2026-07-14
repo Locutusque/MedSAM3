@@ -30,6 +30,7 @@ from lora_layers import (
     count_parameters,
     save_lora_weights,
 )
+from image_utils import load_image_as_rgb, SUPPORTED_IMAGE_EXTENSIONS
 
 
 class TrainingConfig:
@@ -154,8 +155,10 @@ class SAM3Dataset(torch.utils.data.Dataset):
         self.image_dir = self.data_path / "images"
         self.annotation_dir = self.data_path / "annotations"
 
-        self.image_files = sorted(list(self.image_dir.glob("*.jpg")) +
-                                  list(self.image_dir.glob("*.png")))
+        self.image_files = sorted(
+            p for p in self.image_dir.iterdir()
+            if p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+        )
 
         print(f"Loaded {len(self.image_files)} images from {data_path}")
 
@@ -163,10 +166,9 @@ class SAM3Dataset(torch.utils.data.Dataset):
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        # Load image
+        # Load image (supports JPG/PNG/TIFF, including 16-bit medical TIFFs)
         image_path = self.image_files[idx]
-        from PIL import Image
-        image = Image.open(image_path).convert("RGB")
+        image = load_image_as_rgb(image_path)
 
         # Load annotation
         annotation_path = self.annotation_dir / f"{image_path.stem}.json"

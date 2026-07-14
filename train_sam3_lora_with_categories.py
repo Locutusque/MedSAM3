@@ -28,6 +28,7 @@ from sam3.train.data.collator import collate_fn_api
 from sam3.train.loss.sam3_loss import SAM3Loss
 
 from lora_layers import LoRAConfig, apply_lora_to_model, save_lora_weights, count_parameters
+from image_utils import load_image_as_rgb, SUPPORTED_IMAGE_EXTENSIONS
 
 
 class SAM3DatasetWithCategories(Dataset):
@@ -77,8 +78,10 @@ class SAM3DatasetWithCategories(Dataset):
             })
 
         # Get image files
-        self.image_files = sorted(list(self.images_dir.glob("*.jpg")) +
-                                  list(self.images_dir.glob("*.png")))
+        self.image_files = sorted(
+            p for p in self.images_dir.iterdir()
+            if p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+        )
         print(f"📷 Loaded {len(self.image_files)} images from {self.images_dir}")
 
         self.resolution = 1008
@@ -94,8 +97,8 @@ class SAM3DatasetWithCategories(Dataset):
     def __getitem__(self, idx):
         img_path = self.image_files[idx]
 
-        # Load image
-        pil_image = PILImage.open(img_path).convert("RGB")
+        # Load image (supports JPG/PNG/TIFF, including 16-bit medical TIFFs)
+        pil_image = load_image_as_rgb(img_path)
         orig_w, orig_h = pil_image.size
 
         # Resize image

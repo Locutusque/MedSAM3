@@ -34,6 +34,7 @@ from sam3.train.transforms.basic_for_api import (
 
 # LoRA imports
 from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
+from image_utils import load_image_as_rgb
 
 
 def load_lora_model(config_path, weights_path, device='cuda'):
@@ -130,7 +131,7 @@ def create_datapoint(pil_image, prompt):
 def predict(model, image_path, prompt, resolution=1008, threshold=0.5, device='cuda'):
     """Run inference on image"""
     # Load image
-    pil_image = PILImage.open(image_path).convert("RGB")
+    pil_image = load_image_as_rgb(image_path)
 
     # Create datapoint
     datapoint = create_datapoint(pil_image, prompt)

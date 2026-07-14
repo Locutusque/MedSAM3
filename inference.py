@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from transformers import Sam3Model, Sam3Processor
 
 from lora_layers import apply_lora_to_model, load_lora_weights, LoRAConfig
+from image_utils import load_image_as_rgb
 
 
 def load_model_with_lora(
@@ -215,7 +216,7 @@ def main():
 
     # Load image
     print(f"Loading image: {args.image}")
-    image = Image.open(args.image).convert("RGB")
+    image = load_image_as_rgb(args.image)
 
     # Parse bboxes if provided
     bboxes = None
