@@ -19,6 +19,14 @@ Multi-GPU Training:
 
   Multi-GPU with specific GPUs:
     CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train_sam3_lora_native.py --config configs/full_lora_config.yaml --multi-gpu
+
+TPU Training (via AutoXLA, optional):
+    python train_sam3_lora_native.py --config configs/full_lora_config.yaml --tpu
+
+  Requires torch_xla and AutoXLA (see tpu_utils.py for install instructions).
+  Sharding/quantization behavior is controlled by the `tpu:` section of the
+  config (see configs/full_lora_config.yaml). A single process drives all TPU
+  cores through XLA SPMD sharding, so no torchrun launcher is needed.
 """
 
 import os
@@ -51,6 +59,9 @@ from sam3.train.data.sam3_image_dataset import Datapoint, Image, Object, FindQue
 from sam3.model.box_ops import box_xywh_to_xyxy
 from lora_layers import LoRAConfig, apply_lora_to_model, save_lora_weights, count_parameters
 from image_utils import load_image_as_rgb
+
+# Optional TPU support (torch_xla + AutoXLA); all imports inside are guarded
+import tpu_utils
 
 from torchvision.transforms import v2
 import pycocotools.mask as mask_utils  # Required for RLE mask decoding in COCO dataset
@@ -763,16 +774,27 @@ def create_coco_gt_from_dataset_original_res(dataset, image_ids=None, debug=Fals
 
 
 class SAM3TrainerNative:
-    def __init__(self, config_path, multi_gpu=False):
+    def __init__(self, config_path, multi_gpu=False, use_tpu=False):
         with open(config_path, "r") as f:
             self.config = yaml.safe_load(f)
+
+        # TPU setup (via AutoXLA)
+        self.use_tpu = use_tpu or self.config.get("hardware", {}).get("device") == "tpu"
+        if self.use_tpu and multi_gpu:
+            raise ValueError("--tpu and multi-GPU (DDP) are mutually exclusive: "
+                             "TPU training drives all cores from one process via XLA SPMD.")
 
         # Multi-GPU setup
         self.multi_gpu = multi_gpu
         self.local_rank = 0
         self.world_size = 1
 
-        if self.multi_gpu:
+        if self.use_tpu:
+            tpu_utils.require_tpu()
+            self.device = tpu_utils.get_xla_device()
+            self.world_size = tpu_utils.world_size()
+            print_rank0(f"TPU training enabled via AutoXLA ({self.world_size} devices, XLA SPMD)")
+        elif self.multi_gpu:
             self.local_rank = setup_distributed()
             self.world_size = get_world_size()
             self.device = torch.device(f"cuda:{self.local_rank}")
@@ -780,10 +802,17 @@ class SAM3TrainerNative:
         else:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        # bf16 autocast on TPU, driven by the existing mixed_precision setting
+        self.tpu_autocast = (
+            self.use_tpu
+            and str(self.config["training"].get("mixed_precision", "")).lower() in ("bf16", "bfloat16")
+        )
+
         # Build Model
+        # On TPU the model is built on CPU first; AutoXLA moves and shards it.
         print_rank0("Building SAM3 model...")
         self.model = build_sam3_image_model(
-            device=self.device.type,
+            device="cpu" if self.use_tpu else self.device.type,
             compile=False,
             load_from_HF=True,  # Tries to download from HF if checkpoint_path is None
             bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz",
@@ -810,7 +839,16 @@ class SAM3TrainerNative:
         stats = count_parameters(self.model)
         print_rank0(f"Trainable params: {stats['trainable_parameters']:,} ({stats['trainable_percentage']:.2f}%)")
 
-        self.model.to(self.device)
+        if self.use_tpu:
+            # AutoXLA pipeline: (optional) quantize frozen base -> move to XLA
+            # -> SPMD-shard parameters -> (optional) FSDPv2 wrap.
+            # Must run after LoRA is applied and before the optimizer is built.
+            print_rank0("Preparing model for TPU with AutoXLA...")
+            self.model = tpu_utils.prepare_model_for_tpu(
+                self.model, self.config.get("tpu", {})
+            )
+        else:
+            self.model.to(self.device)
 
         # Wrap model with DDP if multi-GPU
         if self.multi_gpu:
@@ -823,7 +861,8 @@ class SAM3TrainerNative:
             print_rank0(f"Model wrapped with DistributedDataParallel")
 
         # Store reference to unwrapped model for accessing custom methods
-        self._unwrapped_model = self.model.module if self.multi_gpu else self.model
+        # (DDP and torch_xla FSDPv2 both expose .module; plain models don't)
+        self._unwrapped_model = getattr(self.model, "module", self.model)
 
         # Optimizer
         self.optimizer = AdamW(
@@ -935,6 +974,9 @@ class SAM3TrainerNative:
                     shuffle=False
                 )
 
+        # pin_memory only helps host->CUDA copies; it is meaningless for XLA
+        pin_memory = self.device.type == "cuda"
+
         train_loader = DataLoader(
             train_ds,
             batch_size=self.config["training"]["batch_size"],
@@ -942,7 +984,7 @@ class SAM3TrainerNative:
             sampler=train_sampler,
             collate_fn=collate_fn,
             num_workers=self.config["training"].get("num_workers", 0),
-            pin_memory=True
+            pin_memory=pin_memory
         )
 
         if has_validation:
@@ -953,7 +995,7 @@ class SAM3TrainerNative:
                 sampler=val_sampler,
                 collate_fn=collate_fn,
                 num_workers=self.config["training"].get("num_workers", 0),
-                pin_memory=True
+                pin_memory=pin_memory
             )
         else:
             val_loader = None
@@ -1019,9 +1061,10 @@ class SAM3TrainerNative:
                 # Move to device
                 input_batch = move_to_device(input_batch, self.device)
 
-                # Forward pass
+                # Forward pass (bf16 autocast on TPU when mixed_precision is bf16)
                 # outputs_list is SAM3Output, we need to pass the whole thing to loss_wrapper
-                outputs_list = self.model(input_batch)
+                with tpu_utils.autocast_context(self.device, self.tpu_autocast):
+                    outputs_list = self.model(input_batch)
 
                 # Prepare targets for loss
                 # input_batch.find_targets is a list of BatchedFindTarget (one per stage)
@@ -1052,7 +1095,8 @@ class SAM3TrainerNative:
 
                 # Compute loss using Sam3LossWrapper
                 # This handles num_boxes calculation and proper weighting
-                loss_dict = self.loss_wrapper(outputs_list, find_targets)
+                with tpu_utils.autocast_context(self.device, self.tpu_autocast):
+                    loss_dict = self.loss_wrapper(outputs_list, find_targets)
 
                 # Extract total loss
                 total_loss = loss_dict[CORE_LOSS_KEY]
@@ -1061,6 +1105,9 @@ class SAM3TrainerNative:
                 self.optimizer.zero_grad()
                 total_loss.backward()
                 self.optimizer.step()
+
+                # Dispatch this step's lazily-built XLA graph (no-op off TPU)
+                tpu_utils.mark_step()
 
                 # Track training loss
                 train_losses.append(total_loss.item())
@@ -1082,7 +1129,8 @@ class SAM3TrainerNative:
                         input_batch = move_to_device(input_batch, self.device)
 
                         # Forward pass
-                        outputs_list = self.model(input_batch)
+                        with tpu_utils.autocast_context(self.device, self.tpu_autocast):
+                            outputs_list = self.model(input_batch)
 
                         # Prepare targets
                         find_targets = [self._unwrapped_model.back_convert(target) for target in input_batch.find_targets]
@@ -1106,9 +1154,11 @@ class SAM3TrainerNative:
                                             aux_out["indices"] = self.matcher(aux_out, targets)
 
                         # Compute loss using Sam3LossWrapper
-                        loss_dict = self.loss_wrapper(outputs_list, find_targets)
+                        with tpu_utils.autocast_context(self.device, self.tpu_autocast):
+                            loss_dict = self.loss_wrapper(outputs_list, find_targets)
                         total_loss = loss_dict[CORE_LOSS_KEY]
 
+                        tpu_utils.mark_step()
                         val_losses.append(total_loss.item())
                         val_pbar.set_postfix({"val_loss": total_loss.item()})
 
@@ -1141,7 +1191,8 @@ class SAM3TrainerNative:
                             "val_loss": avg_val_loss
                         }) + "\n")
 
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
                 # Back to training mode
                 self.model.train()
@@ -1261,6 +1312,13 @@ Examples:
              "Example: --device 0 (single GPU), --device 0 1 2 (3 GPUs)"
     )
     parser.add_argument(
+        "--tpu",
+        action="store_true",
+        help="Train on TPU via AutoXLA (requires torch_xla and AutoXLA; see tpu_utils.py). "
+             "One process drives all TPU cores through XLA SPMD, so no torchrun is needed. "
+             "Sharding/quantization is configured in the `tpu:` section of the config."
+    )
+    parser.add_argument(
         "--master_port",
         type=int,
         default=29500,
@@ -1279,21 +1337,26 @@ Examples:
     )
     args = parser.parse_args()
 
-    # Determine if multi-GPU training is requested
-    num_devices = len(args.device)
-    is_torchrun_subprocess = args._launched_by_torchrun or "LOCAL_RANK" in os.environ
-
-    if num_devices > 1 and not is_torchrun_subprocess:
-        # Multi-GPU requested but not yet in torchrun - launch it
-        launch_distributed_training(args)
-    else:
-        # Single GPU or already in torchrun subprocess
-        multi_gpu = num_devices > 1 and is_torchrun_subprocess
-
-        if not multi_gpu and num_devices == 1:
-            # Single GPU mode - set the device
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device[0])
-            print(f"Using single GPU: {args.device[0]}")
-
-        trainer = SAM3TrainerNative(args.config, multi_gpu=multi_gpu)
+    if args.tpu:
+        # TPU mode: single process, all cores driven via XLA SPMD (AutoXLA)
+        trainer = SAM3TrainerNative(args.config, multi_gpu=False, use_tpu=True)
         trainer.train()
+    else:
+        # Determine if multi-GPU training is requested
+        num_devices = len(args.device)
+        is_torchrun_subprocess = args._launched_by_torchrun or "LOCAL_RANK" in os.environ
+
+        if num_devices > 1 and not is_torchrun_subprocess:
+            # Multi-GPU requested but not yet in torchrun - launch it
+            launch_distributed_training(args)
+        else:
+            # Single GPU or already in torchrun subprocess
+            multi_gpu = num_devices > 1 and is_torchrun_subprocess
+
+            if not multi_gpu and num_devices == 1:
+                # Single GPU mode - set the device
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device[0])
+                print(f"Using single GPU: {args.device[0]}")
+
+            trainer = SAM3TrainerNative(args.config, multi_gpu=multi_gpu)
+            trainer.train()

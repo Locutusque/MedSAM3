@@ -99,6 +99,22 @@ evaluation:
   compute_metrics_during_training: true
 
 hardware:
-  device: "cuda"
+  device: "cuda"             # "cuda" | "cpu" | "tpu" (or pass --tpu on the CLI)
   dataloader_pin_memory: true
   use_compile: false
+
+# TPU settings (only used with --tpu or hardware.device: "tpu").
+# Requires torch_xla and AutoXLA (https://github.com/Locutusque/autoxla);
+# see tpu_utils.py for install instructions. One process drives all TPU
+# cores via XLA SPMD, so no torchrun launcher is needed.
+tpu:
+  sharding_strategy: "fsdp"    # fsdp | dp | mp | 2d | 3d (AutoXLA mesh strategy)
+  use_fsdp_wrap: false         # torch_xla FSDPv2 wrapping; keep false for LoRA
+                               # training so LoRA weight names stay unwrapped
+  quantize_base_model: false   # QLoRA-style: quantize the frozen SAM3 base
+                               # linears via AutoXLA; LoRA adapters stay fp32
+  quantization:
+    n_bits: 8                  # 8 or 4
+    use_pallas: true           # use AutoXLA's Pallas TPU quantized matmul kernel
+    quantize_activation: false # dynamic int8 activation quantization
+    exclude_layers: []         # extra name substrings to keep in full precision

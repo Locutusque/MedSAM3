@@ -88,6 +88,67 @@ python3 infer_sam.py \
 python3 train_sam3_lora_native.py --config configs/full_lora_config.yaml
 ```
 
+## ⚡ TPU Support (via AutoXLA)
+
+Training and inference can optionally run on Google Cloud TPUs through
+[AutoXLA](https://github.com/Locutusque/autoxla), which handles moving the
+model to the XLA device, SPMD parameter sharding across all TPU cores, and
+optional QLoRA-style quantization of the frozen SAM3 base weights.
+
+### Setup (on a TPU VM)
+```bash
+pip install torch~=2.8.0
+pip install 'torch_xla[tpu]~=2.8.0' \
+  --find-links=https://storage.googleapis.com/libtpu-releases/index.html \
+  --find-links=https://storage.googleapis.com/libtpu-wheels/index.html
+pip install 'torch_xla[pallas]' \
+  --find-links=https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+  --find-links=https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+git clone https://github.com/Locutusque/autoxla && pip install -e autoxla
+```
+
+### Training on TPU
+```bash
+python3 train_sam3_lora_native.py --config configs/full_lora_config.yaml --tpu
+```
+
+A single process drives all TPU cores through XLA SPMD — no `torchrun`
+launcher is needed (do not combine `--tpu` with `--device`/multi-GPU).
+Sharding and quantization are configured in the `tpu:` section of the config:
+
+```yaml
+tpu:
+  sharding_strategy: "fsdp"    # fsdp | dp | mp | 2d | 3d
+  use_fsdp_wrap: false         # keep false for LoRA training
+  quantize_base_model: false   # QLoRA-style int8/int4 for the frozen base
+  quantization:
+    n_bits: 8
+    use_pallas: true           # AutoXLA's Pallas TPU quantized matmul kernel
+    quantize_activation: false
+```
+
+`training.mixed_precision: "bf16"` enables bfloat16 autocast on TPU. LoRA
+checkpoints saved on TPU are moved to CPU automatically, so
+`best_lora_weights.pt` stays interchangeable between TPU and GPU machines.
+
+### Inference on TPU
+```bash
+python3 inference_lora.py \
+  --config configs/full_lora_config.yaml \
+  --image path/to/image.jpg \
+  --prompt "skin lesion" \
+  --tpu
+```
+
+Notes:
+- The first training/inference step is slow while XLA compiles the graph;
+  subsequent steps with the same tensor shapes reuse the compiled program.
+- The Hungarian matcher in the loss runs on CPU, which forces a
+  device-to-host sync per step; TPU training still benefits from the large
+  matmul throughput but per-step overhead is higher than a pure-XLA loop.
+- Without torch_xla/AutoXLA installed, everything behaves exactly as before —
+  TPU support activates only with `--tpu` or `hardware.device: "tpu"`.
+
 ## ⚠️ Notes & Precautions
 
 1. **Hyperparameter Tuning:** Please flexibly adjust the `threshold` and `nms-iou` parameters according to the specific task type. Different modalities or segmentation targets may require different sensitivity settings (e.g., some tasks achieve optimal results with `threshold=0.8`, while others work best with `threshold=0.5`). We recommend using the visualization outputs from `infer_sam.py` to determine the best settings for your specific task.

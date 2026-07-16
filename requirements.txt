@@ -66,3 +66,7 @@ typing-extensions>=4.5.0
 pytest>=7.4.0
 black>=23.3.0
 flake8>=6.0.0
+
+# Optional: TPU training/inference via AutoXLA (see tpu_utils.py + README "TPU Support")
+# torch_xla[tpu]~=2.8.0   # install with --find-links, see README
+# AutoXLA                 # git clone https://github.com/Locutusque/autoxla && pip install -e autoxla
