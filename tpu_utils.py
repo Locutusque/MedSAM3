@@ -31,7 +31,10 @@ Install requirements on a TPU VM:
     pip install 'torch_xla[pallas]' \
         --find-links=https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
         --find-links=https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
-    git clone https://github.com/Locutusque/autoxla && pip install -e autoxla
+    # Installed from source; TPU segmentation support is on this branch until it
+    # merges to main (https://github.com/Locutusque/autoxla/pull/1).
+    git clone --branch claude/image-segmentation-quantization-l5h9x9 \
+        https://github.com/Locutusque/autoxla.git && pip install -e autoxla
 """
 
 import contextlib
