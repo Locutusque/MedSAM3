@@ -5,9 +5,6 @@ import torch
 import torch.nn.functional as F
 from numpy.typing import NDArray
 
-from sam3.model.edt import edt_triton
-
-
 def sample_box_points(
     masks: torch.Tensor,
     noise: float = 0.1,  # SAM default
@@ -152,6 +149,21 @@ def sample_one_point_from_error_center(gt_masks, pred_masks, padding=True):
         pred_masks = torch.zeros_like(gt_masks)
     assert gt_masks.dtype == torch.bool and gt_masks.size(1) == 1
     assert pred_masks.dtype == torch.bool and pred_masks.shape == gt_masks.shape
+
+    # The optimized EDT implementation is a CUDA-only Triton kernel. Keep it
+    # out of the import path for TPU/CPU environments and use the existing
+    # OpenCV implementation there instead.
+    if gt_masks.device.type != "cuda":
+        return sample_one_point_from_error_center_slow(
+            gt_masks, pred_masks, padding=padding
+        )
+
+    try:
+        from sam3.model.edt import edt_triton
+    except (ImportError, RuntimeError):
+        return sample_one_point_from_error_center_slow(
+            gt_masks, pred_masks, padding=padding
+        )
 
     B, _, H, W = gt_masks.shape
 
