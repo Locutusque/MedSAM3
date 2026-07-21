@@ -141,7 +141,16 @@ def all_gather(data, force_cpu=False, force_filesys=False, filesys_save_dir=None
     buffer = io.BytesIO()
     torch.save(data, buffer)
     data_view = buffer.getbuffer()
-    device = "cuda" if cpu_group is None else "cpu"
+    use_cuda_collective = (
+        cpu_group is None
+        and dist.get_backend() == torch.distributed.Backend.NCCL
+        and torch.cuda.is_available()
+    )
+    device = (
+        torch.device("cuda", _cuda_device_index)
+        if use_cuda_collective
+        else torch.device("cpu")
+    )
     tensor = torch.ByteTensor(data_view).to(device)
 
     # obtain Tensor size of each rank
@@ -197,7 +206,7 @@ def convert_to_distributed_tensor(tensor: torch.Tensor) -> Tuple[torch.Tensor, s
         and torch.distributed.get_backend() == torch.distributed.Backend.NCCL
         and not tensor.is_cuda
     ):
-        tensor = tensor.cuda()
+        tensor = tensor.to(torch.device("cuda", _cuda_device_index))
     return (tensor, orig_device)
 
 
@@ -369,6 +378,8 @@ def get_primary_rank() -> int:
 
 def set_cuda_device_index(idx: int) -> None:
     global _cuda_device_index
+    if not torch.cuda.is_available():
+        raise RuntimeError("Cannot select a CUDA device because CUDA is unavailable.")
     _cuda_device_index = idx
     torch.cuda.set_device(_cuda_device_index)
 

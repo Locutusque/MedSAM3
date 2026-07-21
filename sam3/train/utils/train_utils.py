@@ -132,11 +132,19 @@ def is_dist_avail_and_initialized():
     return True
 
 
-def get_amp_type(amp_type: Optional[str] = None):
+def get_amp_type(amp_type: Optional[str] = None, device=None):
     if amp_type is None:
         return None
     assert amp_type in ["bfloat16", "float16"], "Invalid Amp type."
     if amp_type == "bfloat16":
+        resolved_device = torch.device(device) if device is not None else None
+        if (
+            resolved_device is not None
+            and resolved_device.type == "cuda"
+            and torch.cuda.is_available()
+            and not torch.cuda.is_bf16_supported()
+        ):
+            return torch.float16
         return torch.bfloat16
     else:
         return torch.float16
@@ -197,13 +205,19 @@ class MemMeter:
         self._allow_updates = True
 
     def update(self, n=1, reset_peak_usage=True):
-        self.val = torch.cuda.max_memory_allocated() // 1e9
+        if self.device.type != "cuda" or not torch.cuda.is_available():
+            self.val = 0
+            self.count += n
+            self.avg = 0
+            return
+
+        self.val = torch.cuda.max_memory_allocated(self.device) // 1e9
         self.sum += self.val * n
         self.count += n
         self.avg = self.sum / self.count
         self.peak = max(self.peak, self.val)
         if reset_peak_usage:
-            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.reset_peak_memory_stats(self.device)
 
     def __str__(self):
         fmtstr = (

@@ -301,8 +301,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--color-seed", type=int, default=13)
     parser.add_argument(
         "--device",
-        default="cuda",
-        help="Requested device. infer_sam.py falls back to CPU when CUDA is absent.",
+        default=None,
+        help="Requested device. Defaults to CUDA when available, otherwise CPU.",
     )
     return parser.parse_args()
 

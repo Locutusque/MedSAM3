@@ -2,6 +2,7 @@
 
 import logging
 from collections import defaultdict
+from functools import wraps
 
 import numpy as np
 import torch
@@ -24,6 +25,29 @@ from torchvision.ops import masks_to_boxes
 from tqdm.auto import tqdm
 
 logger = get_logger(__name__)
+
+
+def _cuda_autocast_if_available(function):
+    """Apply supported CUDA autocast at call time without import-time side effects."""
+
+    @wraps(function)
+    def wrapped(self, *args, **kwargs):
+        if (
+            self.device.type == "cuda"
+            and torch.cuda.is_available()
+        ):
+            dtype = (
+                torch.bfloat16
+                if torch.cuda.is_bf16_supported()
+                else torch.float16
+            )
+            with torch.autocast(
+                device_type=self.device.type, dtype=dtype, enabled=True
+            ):
+                return function(self, *args, **kwargs)
+        return function(self, *args, **kwargs)
+
+    return wrapped
 
 
 class Sam3VideoInference(Sam3VideoBase):
@@ -67,6 +91,7 @@ class Sam3VideoInference(Sam3VideoBase):
             img_std=self.image_std,
             async_loading_frames=async_loading_frames,
             video_loader_type=video_loader_type,
+            compute_device=self.device,
         )
         inference_state = {}
         inference_state["image_size"] = self.image_size
@@ -795,7 +820,7 @@ class Sam3VideoInference(Sam3VideoBase):
         return inference_state
 
     @torch.inference_mode()
-    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    @_cuda_autocast_if_available
     def warm_up_compilation(self):
         """
         Warm up the model by running a dummy inference to compile the model. This is
@@ -903,7 +928,7 @@ class Sam3VideoInference(Sam3VideoBase):
         )
         return frame_idx, self._postprocess_output(inference_state, out)
 
-    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    @_cuda_autocast_if_available
     def forward(self, input: BatchedDatapoint, is_inference: bool = False):
         """This method is only used for benchmark eval (not used in the demo)."""
         # set the model to single GPU for benchmark evaluation (to be compatible with trainer)

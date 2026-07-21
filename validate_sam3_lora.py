@@ -962,7 +962,7 @@ def validate(config_path, weights_path, val_data_dir, num_samples=None,
 
             # Forward pass with optional AMP
             if use_amp:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast(device_type=device.type):
                     outputs_list = model(input_batch)
             else:
                 outputs_list = model(input_batch)

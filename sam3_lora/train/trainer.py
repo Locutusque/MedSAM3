@@ -42,12 +42,20 @@ class SimpleLoRATrainer:
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
-        device: str = "cuda",
+        device: Optional[str] = None,
         max_epochs: int = 10,
         save_dir: str = "./checkpoints",
         inject_lora: bool = True,
     ):
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        requested_device = device or (
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+        if (
+            torch.device(requested_device).type == "cuda"
+            and not torch.cuda.is_available()
+        ):
+            requested_device = "cpu"
+        self.device = torch.device(requested_device)
         self.max_epochs = max_epochs
         self.save_dir = save_dir
         os.makedirs(save_dir, exist_ok=True)

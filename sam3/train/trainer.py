@@ -158,7 +158,7 @@ class Trainer:
         checkpoint: Dict[str, Any],
         max_epochs: int,
         mode: str = "train",
-        accelerator: str = "cuda",
+        accelerator: Optional[str] = None,
         seed_value: int = 123,
         val_epoch_freq: int = 1,
         distributed: Dict[str, bool] = None,
@@ -194,6 +194,15 @@ class Trainer:
         self.skip_first_val = skip_first_val
         self.skip_saving_ckpts = skip_saving_ckpts
         self.empty_gpu_mem_cache_after_eval = empty_gpu_mem_cache_after_eval
+
+        accelerator = accelerator or (
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+        if accelerator == "cuda" and not torch.cuda.is_available():
+            logging.warning(
+                "CUDA was requested but is unavailable; falling back to CPU."
+            )
+            accelerator = "cpu"
 
         self._infer_distributed_backend_if_none(distributed, accelerator)
 
@@ -683,10 +692,10 @@ class Trainer:
             # compute output
             with torch.no_grad():
                 with torch.amp.autocast(
-                    device_type="cuda",
+                    device_type=self.device.type,
                     enabled=(self.optim_conf.amp.enabled if self.optim_conf else False),
                     dtype=(
-                        get_amp_type(self.optim_conf.amp.amp_dtype)
+                        get_amp_type(self.optim_conf.amp.amp_dtype, self.device)
                         if self.optim_conf
                         else None
                     ),
@@ -939,9 +948,11 @@ class Trainer:
             )
             with ddp_context:
                 with torch.amp.autocast(
-                    device_type="cuda",
+                    device_type=self.device.type,
                     enabled=self.optim_conf.amp.enabled,
-                    dtype=get_amp_type(self.optim_conf.amp.amp_dtype),
+                    dtype=get_amp_type(
+                        self.optim_conf.amp.amp_dtype, self.device
+                    ),
                 ):
                     loss_dict, batch_size, extra_losses = self._step(
                         chunked_batch,

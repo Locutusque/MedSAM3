@@ -22,7 +22,7 @@ def load_model_with_lora(
     base_model_name: str,
     lora_weights_path: str,
     lora_config_path: Optional[str] = None,
-    device: str = "cuda",
+    device: Optional[str] = None,
 ):
     """
     Load SAM3 model with LoRA weights.
@@ -36,6 +36,11 @@ def load_model_with_lora(
     Returns:
         Model and processor
     """
+    device = torch.device(
+        device or ("cuda" if torch.cuda.is_available() else "cpu")
+    )
+    if device.type == "cuda" and not torch.cuda.is_available():
+        device = torch.device("cpu")
     print(f"Loading base model: {base_model_name}")
     model = Sam3Model.from_pretrained(base_model_name)
     processor = Sam3Processor.from_pretrained(base_model_name)
@@ -68,7 +73,7 @@ def segment_image(
     image: Image.Image,
     text_prompt: Optional[str] = None,
     bboxes: Optional[List[List[int]]] = None,
-    device: str = "cuda",
+    device: Optional[str] = None,
 ):
     """
     Segment an image using SAM3 with prompts.
@@ -84,6 +89,8 @@ def segment_image(
     Returns:
         Predicted masks
     """
+    device = torch.device(device or next(model.parameters()).device)
+
     # Prepare inputs
     inputs = processor(
         images=image,

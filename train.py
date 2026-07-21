@@ -116,8 +116,8 @@ def main():
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda",
-        help="Device to use (cuda or cpu)",
+        default=None,
+        help="Device to use (defaults to CUDA when available, otherwise CPU)",
     )
     args = parser.parse_args()
 
@@ -134,7 +134,15 @@ def main():
     logging.info(f"Config: {config}")
 
     # Set device
-    device = args.device if torch.cuda.is_available() else "cpu"
+    requested_device = args.device or (
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )
+    if (
+        torch.device(requested_device).type == "cuda"
+        and not torch.cuda.is_available()
+    ):
+        requested_device = "cpu"
+    device = requested_device
     logging.info(f"Using device: {device}")
 
     # Build SAM3 model

@@ -150,6 +150,10 @@ Notes:
 - The Hungarian matcher in the loss runs on CPU, which forces a
   device-to-host sync per step; TPU training still benefits from the large
   matmul throughput but per-step overhead is higher than a pure-XLA loop.
+- No notebook source patch is required for CUDA or Triton imports. CUDA-only
+  kernels are loaded lazily and CPU/XLA paths use portable fallbacks.
+- On CUDA GPUs without bfloat16 support, mixed precision automatically uses
+  float16 instead.
 - Without torch_xla/AutoXLA installed, everything behaves exactly as before —
   TPU support activates only with `--tpu` or `hardware.device: "tpu"`.
 

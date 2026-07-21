@@ -15,22 +15,24 @@ class DummyLoss(torch.nn.Module):
     def __init__(
         self,
         core_loss_key: str = CORE_LOSS_KEY,
-        device: str = "cuda",
+        device: str | torch.device | None = None,
         **kwargs,
     ):
         super().__init__()
         self.core_loss_key = core_loss_key
-        self.device = torch.device(device)
+        self.register_buffer(
+            "_zero", torch.tensor(0.0, device=device or "cpu"), persistent=False
+        )
 
     def forward(self, *args, **kwargs):
-        return {self.core_loss_key: torch.tensor(0.0, device=self.device)}
+        return {self.core_loss_key: self._zero.clone()}
 
     def accumulate(self, out_dict):
         """
         Called by iterative losses.
         """
         if self.core_loss_key not in out_dict:
-            out_dict[self.core_loss_key] = torch.tensor(0.0, device=self.device)
+            out_dict[self.core_loss_key] = self._zero.clone()
         return out_dict
 
 

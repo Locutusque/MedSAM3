@@ -71,14 +71,18 @@ def connected_components(input_tensor: torch.Tensor):
 
     if input_tensor.is_cuda:
         if HAS_CC_TORCH:
-            return get_connected_components(input_tensor.to(torch.uint8))
-        else:
-            # triton fallback
+            try:
+                return get_connected_components(input_tensor.to(torch.uint8))
+            except (AssertionError, OSError, RuntimeError):
+                pass
+        try:
             from sam3.perflib.triton.connected_components import (
                 connected_components_triton,
             )
 
             return connected_components_triton(input_tensor)
+        except (AssertionError, ImportError, OSError, RuntimeError):
+            pass
 
     # CPU fallback
     return connected_components_cpu(input_tensor)

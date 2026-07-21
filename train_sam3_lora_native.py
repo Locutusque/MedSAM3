@@ -77,6 +77,8 @@ from sam3.train.masks_ops import rle_encode  # For encoding masks to RLE format
 
 def setup_distributed():
     """Initialize distributed training environment."""
+    if not torch.cuda.is_available():
+        raise RuntimeError("Multi-GPU training requires a CUDA-enabled PyTorch runtime.")
     if not dist.is_initialized():
         dist.init_process_group(backend="nccl")
 
@@ -629,7 +631,8 @@ def convert_predictions_to_coco_format_original_res(predictions_list, image_ids,
 
         # Free GPU memory immediately after upsampling
         del masks_sigmoid, masks_upsampled
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # Merge overlapping predictions
         if merge_overlaps and len(binary_masks) > 0:

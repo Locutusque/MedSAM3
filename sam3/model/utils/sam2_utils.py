@@ -100,12 +100,13 @@ def load_video_frames(
     img_mean=(0.5, 0.5, 0.5),
     img_std=(0.5, 0.5, 0.5),
     async_loading_frames=False,
-    compute_device=torch.device("cuda"),
+    compute_device=None,
 ):
     """
     Load the video frames from video_path. The frames are resized to image_size as in
     the model and are loaded to GPU if offload_video_to_cpu=False. This is used by the demo.
     """
+    compute_device = torch.device(compute_device or "cpu")
     is_bytes = isinstance(video_path, bytes)
     is_str = isinstance(video_path, str)
     is_mp4_path = is_str and os.path.splitext(video_path)[-1] in [".mp4", ".MP4"]
@@ -141,7 +142,7 @@ def load_video_frames_from_jpg_images(
     img_mean=(0.5, 0.5, 0.5),
     img_std=(0.5, 0.5, 0.5),
     async_loading_frames=False,
-    compute_device=torch.device("cuda"),
+    compute_device=None,
 ):
     """
     Load the video frames from a directory of JPEG files ("<frame_index>.jpg" format).
@@ -151,6 +152,7 @@ def load_video_frames_from_jpg_images(
 
     You can load a frame asynchronously by setting `async_loading_frames` to `True`.
     """
+    compute_device = torch.device(compute_device or "cpu")
     if isinstance(video_path, str) and os.path.isdir(video_path):
         jpg_folder = video_path
     else:
@@ -207,10 +209,12 @@ def load_video_frames_from_video_file(
     offload_video_to_cpu,
     img_mean=(0.5, 0.5, 0.5),
     img_std=(0.5, 0.5, 0.5),
-    compute_device=torch.device("cuda"),
+    compute_device=None,
 ):
     """Load the video frames from a video file."""
     import decord
+
+    compute_device = torch.device(compute_device or "cpu")
 
     img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
     img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]

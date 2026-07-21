@@ -20,6 +20,7 @@ class PositionEmbeddingSine(nn.Module):
         normalize: bool = True,
         scale: Optional[float] = None,
         precompute_resolution: Optional[int] = None,
+        precompute_device: Optional[torch.device | str] = None,
     ):
         super().__init__()
         assert num_pos_feats % 2 == 0, "Expecting even model width"
@@ -43,11 +44,16 @@ class PositionEmbeddingSine(nn.Module):
                 (precompute_resolution // 16, precompute_resolution // 16),
                 (precompute_resolution // 32, precompute_resolution // 32),
             ]
+            device = torch.device(precompute_device or "cpu")
             for size in precompute_sizes:
-                tensors = torch.zeros((1, 1) + size, device="cuda")
-                self.forward(tensors)
+                tensors = torch.zeros((1, 1) + size, device=device)
+                pos = self.forward(tensors)
                 # further clone and detach it in the cache (just to be safe)
-                self.cache[size] = self.cache[size].clone().detach()
+                self.cache[self._cache_key(tensors)] = pos[0].clone().detach()
+
+    @staticmethod
+    def _cache_key(x):
+        return (x.shape[-2], x.shape[-1], x.device.type, x.device.index)
 
     def _encode_xy(self, x, y):
         # The positions are expected to be normalized
@@ -87,8 +93,7 @@ class PositionEmbeddingSine(nn.Module):
 
     @torch.no_grad()
     def forward(self, x):
-        cache_key = None
-        cache_key = (x.shape[-2], x.shape[-1])
+        cache_key = self._cache_key(x)
         if cache_key in self.cache:
             return self.cache[cache_key][None].repeat(x.shape[0], 1, 1, 1)
         y_embed = (

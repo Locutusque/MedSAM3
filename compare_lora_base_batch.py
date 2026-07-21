@@ -36,8 +36,18 @@ from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
 from image_utils import load_image_as_rgb
 
 
-def load_lora_model(config_path, weights_path, device='cuda'):
+def _resolve_device(device=None):
+    requested = torch.device(
+        device or ("cuda" if torch.cuda.is_available() else "cpu")
+    )
+    if requested.type == "cuda" and not torch.cuda.is_available():
+        return torch.device("cpu")
+    return requested
+
+
+def load_lora_model(config_path, weights_path, device=None):
     """Load SAM3 model with LoRA weights"""
+    device = _resolve_device(device)
     print("Loading LoRA model...")
 
     with open(config_path, 'r') as f:
@@ -72,8 +82,9 @@ def load_lora_model(config_path, weights_path, device='cuda'):
     return model
 
 
-def load_base_model(device='cuda'):
+def load_base_model(device=None):
     """Load base SAM3 model without LoRA"""
+    device = _resolve_device(device)
     print("Loading base model...")
 
     model = build_sam3_image_model(
@@ -122,8 +133,9 @@ def create_datapoint(pil_image, prompt):
 
 
 @torch.no_grad()
-def predict(model, image_path, prompt, resolution=1008, threshold=0.5, device='cuda'):
+def predict(model, image_path, prompt, resolution=1008, threshold=0.5, device=None):
     """Run inference on image"""
+    device = _resolve_device(device or next(model.parameters()).device)
     pil_image = load_image_as_rgb(image_path)
     datapoint = create_datapoint(pil_image, prompt)
 

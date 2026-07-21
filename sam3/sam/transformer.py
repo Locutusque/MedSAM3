@@ -244,17 +244,21 @@ class Attention(nn.Module):
         #     enable_mem_efficient=OLD_GPU,
         # ):
         # Let's trust the dispatcher....
-        if self.use_fa3:
-            from sam3.perflib.fa3 import flash_attn_func
+        use_fa3 = self.use_fa3 and q.device.type == "cuda" and dropout_p == 0.0
+        if use_fa3:
+            try:
+                from sam3.perflib.fa3 import flash_attn_func
 
-            assert dropout_p == 0.0
-            out = flash_attn_func(
-                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-            ).transpose(1, 2)
-        else:
-            torch.backends.cuda.enable_flash_sdp(True)
-            torch.backends.cuda.enable_math_sdp(True)
-            torch.backends.cuda.enable_mem_efficient_sdp(True)
+                out = flash_attn_func(
+                    q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+                ).transpose(1, 2)
+            except (ImportError, OSError, RuntimeError):
+                use_fa3 = False
+        if not use_fa3:
+            if q.device.type == "cuda":
+                torch.backends.cuda.enable_flash_sdp(True)
+                torch.backends.cuda.enable_math_sdp(True)
+                torch.backends.cuda.enable_mem_efficient_sdp(True)
             out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
 
         out = self._recombine_heads(out)
@@ -282,9 +286,8 @@ class RoPEAttention(Attention):
         self.compute_cis = partial(
             compute_axial_cis, dim=self.internal_dim // self.num_heads, theta=rope_theta
         )
-        device = torch.device("cuda") if torch.cuda.is_available() else None
         self.freqs_cis = self.compute_cis(
-            end_x=feat_sizes[0], end_y=feat_sizes[1], device=device
+            end_x=feat_sizes[0], end_y=feat_sizes[1], device=None
         )
         if self.use_rope_real:
             self.freqs_cis_real = self.freqs_cis.real
@@ -306,7 +309,7 @@ class RoPEAttention(Attention):
 
         # Apply rotary position encoding
         w = h = math.sqrt(q.shape[-2])
-        if self.freqs_cis.shape[0] != q.shape[-2]:
+        if self.freqs_cis.shape[0] != q.shape[-2] or self.freqs_cis.device != q.device:
             self.freqs_cis = self.compute_cis(end_x=w, end_y=h, device=q.device)
             self.freqs_cis_real = self.freqs_cis.real
             self.freqs_cis_imag = self.freqs_cis.imag
@@ -339,17 +342,21 @@ class RoPEAttention(Attention):
         #     enable_mem_efficient=OLD_GPU,
         # ):
         # Let's trust the dispatcher....
-        if self.use_fa3:
-            from sam3.perflib.fa3 import flash_attn_func
+        use_fa3 = self.use_fa3 and q.device.type == "cuda" and dropout_p == 0.0
+        if use_fa3:
+            try:
+                from sam3.perflib.fa3 import flash_attn_func
 
-            assert dropout_p == 0.0
-            out = flash_attn_func(
-                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-            ).transpose(1, 2)
-        else:
-            torch.backends.cuda.enable_flash_sdp(True)
-            torch.backends.cuda.enable_math_sdp(True)
-            torch.backends.cuda.enable_mem_efficient_sdp(True)
+                out = flash_attn_func(
+                    q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+                ).transpose(1, 2)
+            except (ImportError, OSError, RuntimeError):
+                use_fa3 = False
+        if not use_fa3:
+            if q.device.type == "cuda":
+                torch.backends.cuda.enable_flash_sdp(True)
+                torch.backends.cuda.enable_math_sdp(True)
+                torch.backends.cuda.enable_mem_efficient_sdp(True)
             out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
 
         out = self._recombine_heads(out)

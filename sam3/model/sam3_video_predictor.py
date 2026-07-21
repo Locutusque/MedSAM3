@@ -34,9 +34,15 @@ class Sam3VideoPredictor:
         async_loading_frames=False,
         video_loader_type="cv2",
         apply_temporal_disambiguation: bool = True,
+        device=None,
     ):
         self.async_loading_frames = async_loading_frames
         self.video_loader_type = video_loader_type
+        requested_device = device or getattr(self, "device", None)
+        self.device = torch.device(
+            requested_device
+            or ("cuda" if torch.cuda.is_available() else "cpu")
+        )
         from sam3.model_builder import build_sam3_video_model
 
         self.model = (
@@ -47,8 +53,9 @@ class Sam3VideoPredictor:
                 geo_encoder_use_img_cross_attn=geo_encoder_use_img_cross_attn,
                 strict_state_dict_loading=strict_state_dict_loading,
                 apply_temporal_disambiguation=apply_temporal_disambiguation,
+                device=self.device,
             )
-            .cuda()
+            .to(self.device)
             .eval()
         )
 
@@ -259,28 +266,32 @@ class Sam3VideoPredictor:
         return session
 
     def _get_session_stats(self):
-        """Get a statistics string for live sessions and their GPU usage."""
+        """Get a statistics string for live sessions and accelerator usage."""
         # print both the session ids and their video frame numbers
         live_session_strs = [
             f"'{session_id}' ({session['state']['num_frames']} frames)"
             for session_id, session in self._ALL_INFERENCE_STATES.items()
         ]
-        session_stats_str = (
-            f"live sessions: [{', '.join(live_session_strs)}], GPU memory: "
-            f"{torch.cuda.memory_allocated() // 1024**2} MiB used and "
-            f"{torch.cuda.memory_reserved() // 1024**2} MiB reserved"
-            f" (max over time: {torch.cuda.max_memory_allocated() // 1024**2} MiB used "
-            f"and {torch.cuda.max_memory_reserved() // 1024**2} MiB reserved)"
-        )
+        session_stats_str = f"live sessions: [{', '.join(live_session_strs)}]"
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            session_stats_str += (
+                ", GPU memory: "
+                f"{torch.cuda.memory_allocated(self.device) // 1024**2} MiB used and "
+                f"{torch.cuda.memory_reserved(self.device) // 1024**2} MiB reserved"
+                " (max over time: "
+                f"{torch.cuda.max_memory_allocated(self.device) // 1024**2} MiB used "
+                f"and {torch.cuda.max_memory_reserved(self.device) // 1024**2} MiB reserved)"
+            )
         return session_stats_str
 
     def _get_torch_and_gpu_properties(self):
         """Get a string for PyTorch and GPU properties (for logging and debugging)."""
-        torch_and_gpu_str = (
-            f"torch: {torch.__version__} with CUDA arch {torch.cuda.get_arch_list()}, "
-            f"GPU device: {torch.cuda.get_device_properties(torch.cuda.current_device())}"
-        )
-        return torch_and_gpu_str
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            return (
+                f"torch: {torch.__version__} with CUDA arch {torch.cuda.get_arch_list()}, "
+                f"GPU device: {torch.cuda.get_device_properties(self.device)}"
+            )
+        return f"torch: {torch.__version__}, device: {self.device}"
 
     def shutdown(self):
         """Shutdown the predictor and clear all sessions."""
@@ -289,6 +300,10 @@ class Sam3VideoPredictor:
 
 class Sam3VideoPredictorMultiGPU(Sam3VideoPredictor):
     def __init__(self, *model_args, gpus_to_use=None, **model_kwargs):
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "Sam3VideoPredictorMultiGPU requires a CUDA-enabled PyTorch runtime."
+            )
         if gpus_to_use is None:
             # if not specified, use only the current GPU by default
             gpus_to_use = [torch.cuda.current_device()]
@@ -428,7 +443,7 @@ class Sam3VideoPredictorMultiGPU(Sam3VideoPredictor):
             device_id=self.device,
         )
         # warm-up the NCCL process group by running a dummy all-reduce
-        tensor = torch.ones(1024, 1024).cuda()
+        tensor = torch.ones(1024, 1024, device=self.device)
         torch.distributed.all_reduce(tensor)
         logger.debug(f"started NCCL process group on {rank=} with {world_size=}")
 

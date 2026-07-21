@@ -5,6 +5,7 @@ This script follows the same training procedure as sam3/train/trainer.py
 but with LoRA-specific modifications.
 """
 
+import contextlib
 import logging
 import os
 import time
@@ -49,7 +50,7 @@ class LoRATrainer:
         val_loader: DataLoader,
         optimizer: torch.optim.Optimizer,
         scheduler: Optional[Any] = None,
-        device: str = "cuda",
+        device: Optional[str] = None,
         max_epochs: int = 20,
         val_epoch_freq: int = 5,
         log_dir: str = "./logs",
@@ -60,7 +61,11 @@ class LoRATrainer:
         use_amp: bool = True,
         amp_dtype: str = "bfloat16",
     ):
-        self.device = torch.device(device)
+        self.device = torch.device(
+            device or ("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        if self.device.type == "cuda" and not torch.cuda.is_available():
+            self.device = torch.device("cpu")
         self.max_epochs = max_epochs
         self.val_epoch_freq = val_epoch_freq
         self.log_dir = log_dir
@@ -68,7 +73,6 @@ class LoRATrainer:
         self.save_freq = save_freq
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.max_grad_norm = max_grad_norm
-        self.use_amp = use_amp
 
         # Setup directories
         os.makedirs(log_dir, exist_ok=True)
@@ -93,7 +97,23 @@ class LoRATrainer:
         # AMP scaler
         amp_dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16}
         self.amp_dtype = amp_dtype_map.get(amp_dtype, torch.bfloat16)
-        self.scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        if (
+            self.device.type == "cuda"
+            and self.amp_dtype == torch.bfloat16
+            and not torch.cuda.is_bf16_supported()
+        ):
+            self.amp_dtype = torch.float16
+        self.use_amp = use_amp and (
+            self.device.type == "cuda"
+            or (self.device.type == "cpu" and self.amp_dtype == torch.bfloat16)
+        )
+        scaler_device = (
+            self.device.type if self.device.type in {"cuda", "cpu"} else "cpu"
+        )
+        self.scaler = torch.amp.GradScaler(
+            scaler_device,
+            enabled=self.use_amp and self.amp_dtype == torch.float16,
+        )
 
         # Training state
         self.epoch = 0
@@ -159,7 +179,16 @@ class LoRATrainer:
             input_obj.find_text_batch = [""] * batch_size
 
             # Forward pass with AMP
-            with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=self.amp_dtype):
+            autocast_context = (
+                torch.amp.autocast(
+                    device_type=self.device.type,
+                    enabled=True,
+                    dtype=self.amp_dtype,
+                )
+                if self.use_amp
+                else contextlib.nullcontext()
+            )
+            with autocast_context:
                 outputs = self.model(input_obj)
                 loss = self._compute_loss(outputs, batch)
                 loss = loss / self.gradient_accumulation_steps
@@ -251,7 +280,16 @@ class LoRATrainer:
                 input_obj.find_text_batch = [""] * batch_size
 
                 # Forward pass with AMP
-                with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=self.amp_dtype):
+                autocast_context = (
+                    torch.amp.autocast(
+                        device_type=self.device.type,
+                        enabled=True,
+                        dtype=self.amp_dtype,
+                    )
+                    if self.use_amp
+                    else contextlib.nullcontext()
+                )
+                with autocast_context:
                     outputs = self.model(input_obj)
                     loss = self._compute_loss(outputs, batch)
 

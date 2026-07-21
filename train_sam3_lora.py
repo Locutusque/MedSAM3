@@ -229,7 +229,15 @@ class SAM3Trainer:
         self.set_seed(config.seed)
 
         # Setup device
-        self.device = torch.device(config.device if torch.cuda.is_available() else "cpu")
+        requested_device = config.device
+        if requested_device in (None, "auto"):
+            requested_device = "cuda" if torch.cuda.is_available() else "cpu"
+        if (
+            torch.device(requested_device).type == "cuda"
+            and not torch.cuda.is_available()
+        ):
+            requested_device = "cpu"
+        self.device = torch.device(requested_device)
         print(f"Using device: {self.device}")
 
         # Load model and processor
@@ -269,8 +277,8 @@ class SAM3Trainer:
 
         # Setup mixed precision
         self.scaler = None
-        if config.mixed_precision == "fp16":
-            self.scaler = torch.cuda.amp.GradScaler()
+        if config.mixed_precision == "fp16" and self.device.type == "cuda":
+            self.scaler = torch.amp.GradScaler(self.device.type)
 
         # Training state
         self.global_step = 0
@@ -283,7 +291,8 @@ class SAM3Trainer:
     def set_seed(self, seed: int):
         """Set random seed for reproducibility."""
         torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
         np.random.seed(seed)
 
     def create_dataloaders(self):
@@ -333,7 +342,13 @@ class SAM3Trainer:
         gt_masks = batch.pop("ground_truth_masks", None)
 
         # Forward pass
-        with torch.cuda.amp.autocast(enabled=self.config.mixed_precision == "fp16"):
+        with torch.amp.autocast(
+            device_type=self.device.type,
+            enabled=(
+                self.config.mixed_precision == "fp16"
+                and self.device.type == "cuda"
+            ),
+        ):
             outputs = self.model(**batch)
 
             # Compute loss (custom loss for segmentation)

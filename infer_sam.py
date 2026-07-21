@@ -68,7 +68,7 @@ class SAM3LoRAInference:
         resolution: int = 1008,
         detection_threshold: float = 0.5,
         nms_iou_threshold: float = 0.5,
-        device: str = "cuda"
+        device: Optional[str] = None,
     ):
         """
         Initialize SAM3 with LoRA.
@@ -79,7 +79,7 @@ class SAM3LoRAInference:
             resolution: Input image resolution (default: 1008)
             detection_threshold: Confidence threshold for detections (default: 0.5)
             nms_iou_threshold: IoU threshold for NMS (default: 0.5)
-            device: Device to run on (default: "cuda")
+            device: Device to run on (defaults to CUDA when available, otherwise CPU)
         """
         # Load config
         with open(config_path, 'r') as f:
@@ -98,7 +98,12 @@ class SAM3LoRAInference:
         self.resolution = resolution
         self.detection_threshold = detection_threshold
         self.nms_iou_threshold = nms_iou_threshold
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        requested_device = torch.device(
+            device or ("cuda" if torch.cuda.is_available() else "cpu")
+        )
+        if requested_device.type == "cuda" and not torch.cuda.is_available():
+            requested_device = torch.device("cpu")
+        self.device = requested_device
 
         print(f"🔧 Initializing SAM3 + LoRA...")
         print(f"   Device: {self.device}")

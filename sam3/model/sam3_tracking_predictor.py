@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved
 
+import contextlib
 import logging
 from collections import OrderedDict
 
@@ -46,7 +47,17 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
         self.max_point_num_in_prompt_enc = max_point_num_in_prompt_enc
         self.non_overlap_masks_for_output = non_overlap_masks_for_output
 
-        self.bf16_context = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            autocast_dtype = (
+                torch.bfloat16
+                if torch.cuda.is_bf16_supported()
+                else torch.float16
+            )
+            self.bf16_context = torch.autocast(
+                device_type=self.device.type, dtype=autocast_dtype
+            )
+        else:
+            self.bf16_context = contextlib.nullcontext()
         self.bf16_context.__enter__()  # keep using for the entire model process
 
         self.iter_use_prev_mask_pred = True
@@ -78,7 +89,7 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
         if offload_state_to_cpu:
             inference_state["storage_device"] = torch.device("cpu")
         else:
-            inference_state["storage_device"] = torch.device("cuda")
+            inference_state["storage_device"] = self.device
 
         if video_path is not None:
             images, video_height, video_width = load_video_frames(
@@ -86,7 +97,7 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
                 image_size=self.image_size,
                 offload_video_to_cpu=offload_video_to_cpu,
                 async_loading_frames=async_loading_frames,
-                compute_device=inference_state["storage_device"],
+                compute_device=inference_state["device"],
             )
             inference_state["images"] = images
             inference_state["num_frames"] = len(images)
@@ -300,7 +311,9 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
                     prev_out = obj_output_dict["non_cond_frame_outputs"].get(frame_idx)
 
             if prev_out is not None and prev_out["pred_masks"] is not None:
-                prev_sam_mask_logits = prev_out["pred_masks"].cuda(non_blocking=True)
+                prev_sam_mask_logits = prev_out["pred_masks"].to(
+                    inference_state["device"], non_blocking=True
+                )
                 # Clamp the scale of prev_sam_mask_logits to avoid rare numerical issues.
                 prev_sam_mask_logits = torch.clamp(prev_sam_mask_logits, -32.0, 32.0)
         current_out, _ = self._run_single_frame_inference(
@@ -1021,7 +1034,12 @@ class Sam3TrackerPredictor(Sam3TrackerBase):
                 )
             else:
                 # Cache miss -- we will run inference on a single image
-                image = inference_state["images"][frame_idx].cuda().float().unsqueeze(0)
+                image = (
+                    inference_state["images"][frame_idx]
+                    .to(inference_state["device"])
+                    .float()
+                    .unsqueeze(0)
+                )
                 backbone_out = self.forward_image(image)
                 # Cache the most recent frame's feature (for repeated interactions with
                 # a frame; we can use an LRU cache for more frames in the future).

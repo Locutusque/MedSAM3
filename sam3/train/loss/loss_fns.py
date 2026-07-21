@@ -12,10 +12,6 @@ from sam3.model import box_ops
 
 from sam3.model.data_misc import interpolate
 
-from sam3.train.loss.sigmoid_focal_loss import (
-    triton_sigmoid_focal_loss,
-    triton_sigmoid_focal_loss_reduce,
-)
 from torch import nn
 
 from .mask_sampling import (
@@ -148,15 +144,33 @@ def sigmoid_focal_loss(
     Returns:
         Loss tensor
     """
-    if not (0 <= alpha <= 1) and triton:
-        raise RuntimeError(f"Alpha should be in [0,1], got {alpha}")
-    if triton:
-        if reduce and not loss_on_multimask:
-            loss = triton_sigmoid_focal_loss_reduce(inputs, targets, alpha, gamma)
-            return loss / (num_boxes * inputs.shape[1])
+    use_triton = triton and inputs.device.type == "cuda"
+    triton_sigmoid_focal_loss = None
+    triton_sigmoid_focal_loss_reduce = None
+    if use_triton:
+        try:
+            from sam3.train.loss.sigmoid_focal_loss import (
+                triton_sigmoid_focal_loss,
+                triton_sigmoid_focal_loss_reduce,
+            )
+        except (ImportError, OSError, RuntimeError):
+            use_triton = False
 
-        loss = triton_sigmoid_focal_loss(inputs, targets, alpha, gamma)
-    else:
+    if not (0 <= alpha <= 1) and use_triton:
+        raise RuntimeError(f"Alpha should be in [0,1], got {alpha}")
+    if use_triton:
+        try:
+            if reduce and not loss_on_multimask:
+                loss = triton_sigmoid_focal_loss_reduce(
+                    inputs, targets, alpha, gamma
+                )
+                return loss / (num_boxes * inputs.shape[1])
+
+            loss = triton_sigmoid_focal_loss(inputs, targets, alpha, gamma)
+        except (AssertionError, OSError, RuntimeError):
+            use_triton = False
+
+    if not use_triton:
         prob = inputs.sigmoid()
         ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
         p_t = prob * targets + (1 - prob) * (1 - targets)

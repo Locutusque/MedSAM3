@@ -105,7 +105,7 @@ def dilation(mask, kernel_size):
         kernel_size % 2 == 1
     ), f"Dilation expects a odd kernel size, got {kernel_size}"
 
-    if mask.is_cuda:
+    if mask.device.type != "cpu":
         m = mask.unsqueeze(1).to(torch.float16)
         k = torch.ones(1, 1, kernel_size, 1, dtype=m.dtype, device=m.device)
 
