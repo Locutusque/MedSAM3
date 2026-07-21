@@ -132,8 +132,9 @@ tpu:
 ```
 
 `training.mixed_precision: "bf16"` enables bfloat16 autocast on TPU. LoRA
-checkpoints saved on TPU are moved to CPU automatically, so
-`best_lora_weights.pt` stays interchangeable between TPU and GPU machines.
+checkpoints are saved on CPU and are always deserialized on CPU before being
+moved to the selected execution device, so `best_lora_weights.pt` stays
+interchangeable between TPU, GPU, and CPU machines.
 
 ### Inference on TPU
 ```bash

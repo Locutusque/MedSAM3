@@ -539,6 +539,11 @@ def load_lora_weights(model: nn.Module, load_path: str):
         model: Model with LoRA layers
         load_path: Path to LoRA weights
     """
-    lora_state_dict = torch.load(load_path)
+    # LoRA checkpoints may have been saved from CUDA. Always deserialize them on
+    # CPU so loading also works on CPU-only and TPU/XLA runtimes; the caller
+    # moves the model to its execution device after the weights are restored.
+    lora_state_dict = torch.load(
+        load_path, map_location="cpu", weights_only=True
+    )
     model.load_state_dict(lora_state_dict, strict=False)
     print(f"Loaded LoRA weights from {load_path}")
