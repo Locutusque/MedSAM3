@@ -299,13 +299,16 @@ class SAM3Trainer:
         """Create training and validation dataloaders."""
         train_dataset = SAM3Dataset(self.config.train_data_path, self.processor)
         val_dataset = SAM3Dataset(self.config.val_data_path, self.processor)
+        pin_memory = (
+            self.config.dataloader_pin_memory and self.device.type == "cuda"
+        )
 
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.config.batch_size,
             shuffle=True,
             num_workers=self.config.num_workers,
-            pin_memory=self.config.dataloader_pin_memory,
+            pin_memory=pin_memory,
         )
 
         val_loader = DataLoader(
@@ -313,7 +316,7 @@ class SAM3Trainer:
             batch_size=self.config.batch_size,
             shuffle=False,
             num_workers=self.config.num_workers,
-            pin_memory=self.config.dataloader_pin_memory,
+            pin_memory=pin_memory,
         )
 
         return train_loader, val_loader

@@ -283,7 +283,7 @@ class SAM3TrainerWithCategories:
             shuffle=True,
             num_workers=train_cfg.get("num_workers", 4),
             collate_fn=lambda batch: collate_fn_api(batch, dict_key="input", with_seg_masks=True),
-            pin_memory=True
+            pin_memory=self.device.type == "cuda"
         )
 
         if self.val_dataset:
@@ -293,7 +293,7 @@ class SAM3TrainerWithCategories:
                 shuffle=False,
                 num_workers=train_cfg.get("num_workers", 4),
                 collate_fn=lambda batch: collate_fn_api(batch, dict_key="input", with_seg_masks=True),
-                pin_memory=True
+                pin_memory=self.device.type == "cuda"
             )
         else:
             self.val_loader = None

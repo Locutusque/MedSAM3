@@ -644,6 +644,12 @@ class SequenceGeometryEncoder(nn.Module):
         boxes_embed = None
         n_boxes, bs = boxes.shape[:2]
 
+        if n_boxes == 0:
+            empty_embed = self.label_embed.weight.new_empty(
+                (0, bs, self.d_model)
+            )
+            return empty_embed, boxes_mask
+
         if self.boxes_direct_project is not None:
             proj = self.boxes_direct_project(boxes)
             assert boxes_embed is None
@@ -655,8 +661,7 @@ class SequenceGeometryEncoder(nn.Module):
             # boxes are [Num_boxes, bs, 4], normalized in [0, 1]
             # We need to denormalize, and convert to [x, y, x, y]
             boxes_xyxy = box_cxcywh_to_xyxy(boxes)
-            scale = torch.tensor([W, H, W, H], dtype=boxes_xyxy.dtype)
-            scale = scale.pin_memory().to(device=boxes_xyxy.device, non_blocking=True)
+            scale = boxes_xyxy.new_tensor([W, H, W, H])
             scale = scale.view(1, 1, 4)
             boxes_xyxy = boxes_xyxy * scale
             sampled = torchvision.ops.roi_align(

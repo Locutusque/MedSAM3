@@ -932,7 +932,7 @@ def validate(config_path, weights_path, val_data_dir, num_samples=None,
         shuffle=False,
         collate_fn=collate_fn,
         num_workers=4,  # Enable parallel data loading
-        pin_memory=True  # Faster GPU transfer
+        pin_memory=device.type == "cuda",
     )
 
     # Create matcher for loss computation

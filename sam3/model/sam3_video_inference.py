@@ -502,14 +502,12 @@ class Sam3VideoInference(Sam3VideoBase):
 
             # slice those valid entries from the original outputs
             keep_idx = torch.nonzero(keep, as_tuple=True)[0]
-            keep_idx_gpu = keep_idx.pin_memory().to(
-                device=out_binary_masks.device, non_blocking=True
-            )
+            keep_idx_device = keep_idx.to(device=out_binary_masks.device)
 
             out_obj_ids = torch.index_select(out_obj_ids, 0, keep_idx)
             out_probs = torch.index_select(out_probs, 0, keep_idx)
             out_tracker_probs = torch.index_select(out_tracker_probs, 0, keep_idx)
-            out_binary_masks = torch.index_select(out_binary_masks, 0, keep_idx_gpu)
+            out_binary_masks = torch.index_select(out_binary_masks, 0, keep_idx_device)
 
             if perflib.is_enabled:
                 out_boxes_xyxy = perf_masks_to_boxes(

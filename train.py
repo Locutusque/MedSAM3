@@ -181,7 +181,10 @@ def main():
         val_ann_file=config["dataset"]["val_ann_file"],
         batch_size=config["training"]["batch_size"],
         num_workers=config["dataset"]["num_workers"],
-        pin_memory=config["dataset"]["pin_memory"],
+        pin_memory=(
+            config["dataset"]["pin_memory"]
+            and torch.device(device).type == "cuda"
+        ),
         max_ann_per_img=config["dataset"]["max_ann_per_img"],
     )
 
