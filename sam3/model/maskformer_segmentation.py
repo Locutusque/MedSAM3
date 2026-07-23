@@ -126,7 +126,10 @@ class SegmentationHead(nn.Module):
             )
 
             backbone_visual_feats[-1] = encoder_visual_embed
-            if self.act_ckpt:
+            # Checkpointing only saves memory when autograd records the forward pass.
+            # Skipping it during inference also avoids PyTorch trying to resolve an
+            # unsupported `torch.xla` device module for XLA tensors.
+            if self.act_ckpt and self.training and torch.is_grad_enabled():
                 pixel_embed = checkpoint.checkpoint(
                     self.pixel_decoder, backbone_visual_feats, use_reentrant=False
                 )
